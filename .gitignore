@@ -8,3 +8,6 @@ models/*.joblib
 
 #忽略日志
 logs/
+
+# 忽略配置文件
+*.pyc
