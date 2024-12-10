@@ -13,22 +13,22 @@ class XGBoostQueuePredictor(BaseModel):
     
     def __init__(self, params=None):
         super().__init__(name="XGBoostQueuePredictor")
-        # 为不同目标设置不同的参数
+        # 更新基础参数以适应新特征
         self.base_params = {
             '排队到叫号等待': {
                 'objective': 'reg:squarederror',
-                'max_depth': 6,
-                'learning_rate': 0.1,
-                'n_estimators': 100,
+                'max_depth': 8,        # 增加深度
+                'learning_rate': 0.05, # 降低学习率
+                'n_estimators': 200,   # 增加树的数量
                 'subsample': 0.8,
-                'colsample_bytree': 0.8,
+                'colsample_bytree': 0.7,
                 'random_state': 42
             },
             '叫号到入口等待': {
                 'objective': 'reg:squarederror',
-                'max_depth': 8,  # 增加深度
-                'learning_rate': 0.05,  # 降低学习率
-                'n_estimators': 200,  # 增加树的数量
+                'max_depth': 10,
+                'learning_rate': 0.03,
+                'n_estimators': 300,
                 'subsample': 0.7,
                 'colsample_bytree': 0.7,
                 'random_state': 42

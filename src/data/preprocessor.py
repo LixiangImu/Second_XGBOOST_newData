@@ -126,6 +126,9 @@ class DataPreprocessor:
         
         df = self.add_time_features(df)
         print("完成时间特征提取")
+
+        df = self.add_features(df)
+        print("完成额外特征添加")
         
         df = self.clean_data(df)
         print(f"数据清洗后剩余记录数: {len(df)}")
@@ -133,19 +136,81 @@ class DataPreprocessor:
         return df
 
     def add_features(self, df):
-        """添加新特征"""
-        # 时间相关特征
-        df['小时分钟'] = df['排队小时'] * 60 + df['排队分钟']  # 转换为分钟计数
+        """使用滑动窗口添加新特征"""
+        # 确保排队时刻列存在且为datetime类型
+        if '排队时刻' not in df.columns:
+            print("警告：排队时刻列不存在，尝试重新创建...")
+            df['排队时刻'] = pd.to_datetime(df['排队日期'] + ' ' + df['排队时间'])
+        
+        # 确保数据按时间排序并创建唯一索引
+        df = df.sort_values('排队时刻').reset_index(drop=True)
+        
+        # 基础时间特征
+        df['小时分钟'] = df['排队小时'] * 60 + df['排队分钟']
         df['是否高峰期'] = ((df['排队小时'] >= 8) & (df['排队小时'] <= 11)) | \
                           ((df['排队小时'] >= 14) & (df['排队小时'] <= 17))
         
-        # 排队相关特征
-        df['单位煤种平均排队数'] = df['同煤种排队数'] / df.groupby('煤种编号_encoded')['同煤种排队数'].transform('count')
-        df['排队压力指数'] = df['当前排队数'] * df['同煤种排队数'] / df['总排队数'].mean()
+        # 定义滑动窗口大小（分钟）
+        windows = {
+            '30分钟': 30,
+            '1小时': 60,
+            '2小时': 120,
+            '4小时': 240
+        }
         
-        # 历史等待时间的统计特征
-        for col in ['前1小时平均排队等待', '前2小时平均排队等待', '前4小时平均排队等待']:
-            df[f'{col}_std'] = df.groupby('煤种编号_encoded')[col].transform('std')
-            df[f'{col}_max'] = df.groupby('煤种编号_encoded')[col].transform('max')
+        # 对每个煤种分别计算滑动窗口统计
+        for window_name, minutes in windows.items():
+            # 为每个煤种单独计算
+            for coal_type in df['煤种编号'].unique():
+                mask = df['煤种编号'] == coal_type
+                coal_df = df[mask].copy()
+                
+                # 计算滑动窗口统计
+                for idx in coal_df.index:
+                    current_time = coal_df.loc[idx, '排队时刻']
+                    window_start = current_time - pd.Timedelta(minutes=minutes)
+                    
+                    # 获取窗口内的数据
+                    window_data = coal_df[
+                        (coal_df['排队时刻'] > window_start) & 
+                        (coal_df['排队时刻'] <= current_time)
+                    ]
+                    
+                    # 计算统计量
+                    df.loc[idx, f'{window_name}平均排队等待'] = window_data['排队到叫号等待'].mean()
+                    df.loc[idx, f'{window_name}最大排队等待'] = window_data['排队到叫号等待'].max()
+                    df.loc[idx, f'{window_name}标准差'] = window_data['排队到叫号等待'].std()
+                    df.loc[idx, f'{window_name}煤种排队数'] = len(window_data)
+            
+            # 计算总体排队情况（不分煤种）
+            for idx in df.index:
+                current_time = df.loc[idx, '排队时刻']
+                window_start = current_time - pd.Timedelta(minutes=minutes)
+                
+                # 计算窗口内的总排队数
+                total_queue = len(df[
+                    (df['排队时刻'] > window_start) & 
+                    (df['排队时刻'] <= current_time)
+                ])
+                
+                df.loc[idx, f'{window_name}总排队数'] = total_queue
+        
+        # 计算排队压力指数
+        for window_name in windows.keys():
+            df[f'{window_name}排队压力指数'] = (
+                df[f'{window_name}煤种排队数'] / 
+                df[f'{window_name}总排队数'].clip(lower=1)
+            ) * df[f'{window_name}平均排队等待']
+        
+        # 添加时间周期特征
+        df['小时周期性'] = np.sin(2 * np.pi * df['排队小时'] / 24)
+        df['星期周期性'] = np.sin(2 * np.pi * df['排队星期'] / 7)
+        
+        # 填充可能的空值
+        numeric_columns = df.select_dtypes(include=['float64', 'int64']).columns
+        df[numeric_columns] = df[numeric_columns].fillna(0)
+        
+        # 处理无穷大和NaN值
+        df = df.replace([np.inf, -np.inf], 0)
         
         return df

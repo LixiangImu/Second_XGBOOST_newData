@@ -1,12 +1,14 @@
+import logging
 import pandas as pd
 import numpy as np
-from pathlib import Path
 import joblib
-import logging
-from datetime import datetime
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from config import Config
-from predict import QueuePredictor
+from data.preprocessor import DataPreprocessor
+from data.feature_engineer import FeatureEngineer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,131 +17,169 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class ModelEvaluator:
+    """模型评估器"""
+    
     def __init__(self):
-        self.predictor = QueuePredictor()
-    
-    def evaluate_model(self, X_test, y_test, n_samples=10):
-        """评估模型性能并展示样例"""
-        results = []
+        self.model = None
+        self.scaler = None
+        self.preprocessor = DataPreprocessor()
+        self.feature_engineer = FeatureEngineer()
+        self.results_dir = Config.MODELS_DIR / 'evaluation_results'
+        self.results_dir.mkdir(parents=True, exist_ok=True)
         
-        # 对每条数据进行预测
-        for idx, row in X_test.iterrows():
-            queue_time = f"{row['排队日期']} {row['排队时间']}"
-            pred = self.predictor.predict_waiting_time(queue_time, row['煤种编号'])
+    def load_model_and_data(self):
+        """加载模型和数据"""
+        try:
+            # 加载模型和标准化器
+            self.model = joblib.load(Config.MODELS_DIR / 'queue_predictor.joblib')
+            self.scaler = joblib.load(Config.MODELS_DIR / 'scaler.joblib')
             
-            results.append({
-                '提煤单号': row['提煤单号'] if '提煤单号' in row else f'样本_{idx}',
-                '煤种编号': row['煤种编号'],
-                '排队时间': queue_time,
-                '预测排队到叫号等待': pred['预计排队到叫号等待(分钟)'],
-                '预测叫号到入口等待': pred['预计叫号到入口等待(分钟)'],
-                '预测总等待时间': pred['预计总等待时间(分钟)'],
-                '实际排队到叫号等待': y_test.iloc[idx, 0],  # 第一列是排队到叫号等待
-                '实际叫号到入口等待': y_test.iloc[idx, 1],  # 第二列是叫号到入口等待
-                '实际总等待时间': y_test.iloc[idx, 0] + y_test.iloc[idx, 1]  # 总等待时间
-            })
-        
-        results_df = pd.DataFrame(results)
-        
-        # 计算评估指标
-        metrics = self._calculate_metrics(results_df)
-        
-        # 添加预测偏差
-        results_df['排队到叫号偏差'] = results_df['预测排队到叫号等待'] - results_df['实际排队到叫号等待']
-        results_df['叫号到入口偏差'] = results_df['预测叫号到入口等待'] - results_df['实际叫号到入口等待']
-        results_df['总等待时间偏差'] = results_df['预测总等待时间'] - results_df['实际总等待时间']
-        
-        # 展示评估结果
-        self._display_evaluation_results(metrics, results_df, n_samples)
-        
-        return metrics, results_df
+            # 加载原始测试数据
+            X_test = pd.read_csv(Config.DATA_DIR / 'processed' / 'X_test.csv')
+            y_test = pd.read_csv(Config.DATA_DIR / 'processed' / 'y_test.csv')
+            
+            # 加载标签编码器
+            self.feature_engineer.label_encoders = joblib.load(
+                Config.MODELS_DIR / 'label_encoders.joblib'
+            )
+            
+            # 应用特征工程
+            X_test_processed = self.feature_engineer.process(X_test)
+            
+            # 应用特征缩放
+            feature_names = self.scaler.feature_names_in_
+            X_test_scaled = X_test_processed.copy()
+            X_test_scaled[feature_names] = self.scaler.transform(X_test_processed[feature_names])
+            
+            logger.info("模型和数据加载成功")
+            logger.info(f"特征列表: {feature_names.tolist()}")
+            
+            return X_test_scaled, y_test, X_test
+            
+        except Exception as e:
+            logger.error(f"加载模型或数据时出错: {str(e)}")
+            raise
     
-    def _calculate_metrics(self, results):
+    def calculate_metrics(self, y_true, y_pred):
         """计算评估指标"""
         metrics = {}
+        target_names = ['排队到叫号等待', '叫号到入口等待']
         
-        for wait_type in ['排队到叫号等待', '叫号到入口等待', '总等待时间']:
-            pred_col = f'预测{wait_type}'
-            actual_col = f'实际{wait_type}'
-            
-            metrics[f'{wait_type}_mse'] = mean_squared_error(
-                results[actual_col], results[pred_col]
-            )
-            metrics[f'{wait_type}_rmse'] = np.sqrt(metrics[f'{wait_type}_mse'])
-            metrics[f'{wait_type}_mae'] = mean_absolute_error(
-                results[actual_col], results[pred_col]
-            )
-            metrics[f'{wait_type}_r2'] = r2_score(
-                results[actual_col], results[pred_col]
-            )
-            
-            # 添加平均偏差百分比
-            metrics[f'{wait_type}_mape'] = np.mean(
-                np.abs(results[f'{pred_col}'] - results[f'{actual_col}']) / 
-                (results[f'{actual_col}'] + 1e-8) * 100  # 添加小值避免除零
-            )
+        for i, target in enumerate(target_names):
+            metrics[target] = {
+                'MSE': mean_squared_error(y_true.iloc[:, i], y_pred[:, i]),
+                'RMSE': np.sqrt(mean_squared_error(y_true.iloc[:, i], y_pred[:, i])),
+                'MAE': mean_absolute_error(y_true.iloc[:, i], y_pred[:, i]),
+                'R2': r2_score(y_true.iloc[:, i], y_pred[:, i]),
+                'MAPE': np.mean(np.abs((y_true.iloc[:, i] - y_pred[:, i]) / y_true.iloc[:, i])) * 100
+            }
         
         return metrics
     
-    def _display_evaluation_results(self, metrics, results_df, n_samples):
-        """展示评估结果"""
-        # 1. 显示整体评估指标
-        logger.info("\n模型评估指标:")
-        for wait_type in ['排队到叫号等待', '叫号到入口等待', '总等待时间']:
-            logger.info(f"\n{wait_type}:")
-            logger.info(f"  RMSE: {metrics[f'{wait_type}_rmse']:.2f}分钟")
-            logger.info(f"  MAE: {metrics[f'{wait_type}_mae']:.2f}分钟")
-            logger.info(f"  R²: {metrics[f'{wait_type}_r2']:.4f}")
-            logger.info(f"  MAPE: {metrics[f'{wait_type}_mape']:.2f}%")
+    def plot_prediction_scatter(self, y_true, y_pred):
+        """绘制预测值与真实值的散点图"""
+        target_names = ['排队到叫号等待', '叫号到入口等待']
         
-        # 2. 展示随机样例
-        logger.info("\n预测样例 (随机抽取):")
-        sample_results = results_df.sample(n=n_samples, random_state=42)
+        plt.figure(figsize=(15, 6))
+        for i, target in enumerate(target_names):
+            plt.subplot(1, 2, i+1)
+            plt.scatter(y_true.iloc[:, i], y_pred[:, i], alpha=0.5)
+            plt.plot([y_true.iloc[:, i].min(), y_true.iloc[:, i].max()], 
+                    [y_true.iloc[:, i].min(), y_true.iloc[:, i].max()], 
+                    'r--', lw=2)
+            plt.xlabel('实际等待时间 (分钟)')
+            plt.ylabel('预测等待时间 (分钟)')
+            plt.title(f'{target}预测散点图')
         
-        for _, row in sample_results.iterrows():
-            logger.info("\n" + "="*50)
-            logger.info(f"提煤单号: {row['提煤单号']}")
-            logger.info(f"煤种编号: {row['煤种编号']}")
-            logger.info(f"排队时间: {row['排队时间']}")
-            logger.info("\n排队到叫号等待:")
-            logger.info(f"  预测: {row['预测排队到叫号等待']:.1f}分钟")
-            logger.info(f"  实际: {row['实际排队到叫号等待']:.1f}分钟")
-            logger.info(f"  偏差: {row['排队到叫号偏差']:.1f}分钟")
-            logger.info("\n叫号到入口等待:")
-            logger.info(f"  预测: {row['预测叫号到入口等待']:.1f}分钟")
-            logger.info(f"  实际: {row['实际叫号到入口等待']:.1f}分钟")
-            logger.info(f"  偏差: {row['叫号到入口偏差']:.1f}分钟")
-            logger.info("\n总等待时间:")
-            logger.info(f"  预测: {row['预测总等待时间']:.1f}分钟")
-            logger.info(f"  实际: {row['实际总等待时间']:.1f}分钟")
-            logger.info(f"  偏差: {row['总等待时间偏差']:.1f}分钟")
-
-def main():
-    """主函数"""
-    try:
-        # 打印当前工作目录和数据目录
-        logger.info(f"当前工作目录: {Path.cwd()}")
-        logger.info(f"数据目录: {Config.PROCESSED_DATA_DIR}")
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'prediction_scatter.png')
+        plt.close()
+    
+    def plot_error_distribution(self, y_true, y_pred):
+        """绘制预测误差分布图"""
+        target_names = ['排队到叫号等待', '叫号到入口等待']
+        errors = y_pred - y_true.values
         
-        # 加载测试数据
-        X_test = pd.read_csv(Config.PROCESSED_DATA_DIR / 'X_test.csv')
-        y_test = pd.read_csv(Config.PROCESSED_DATA_DIR / 'y_test.csv')
+        plt.figure(figsize=(15, 6))
+        for i, target in enumerate(target_names):
+            plt.subplot(1, 2, i+1)
+            sns.histplot(errors[:, i], kde=True)
+            plt.xlabel('预测误差 (分钟)')
+            plt.ylabel('频率')
+            plt.title(f'{target}预测误差分布')
         
-        logger.info(f"加载测试数据 X: {X_test.shape}, y: {y_test.shape}")
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'error_distribution.png')
+        plt.close()
+    
+    def analyze_feature_importance(self, X_test):
+        """分析特征重要性"""
+        importance_dict = self.model.get_feature_importance()
         
-        # 创建评估器
-        evaluator = ModelEvaluator()
+        plt.figure(figsize=(15, 10))
+        for i, (target, importance) in enumerate(importance_dict.items()):
+            plt.subplot(2, 1, i+1)
+            
+            # 获取前15个最重要的特征
+            sorted_importance = dict(sorted(importance.items(), 
+                                          key=lambda x: x[1], 
+                                          reverse=True)[:15])
+            
+            # 创建水平条形图
+            plt.barh(list(sorted_importance.keys()), 
+                    list(sorted_importance.values()))
+            plt.title(f'{target} - 特征重要性 Top 15')
+            plt.xlabel('重要性得分')
         
-        # 评估模型
-        metrics, results = evaluator.evaluate_model(X_test, y_test, n_samples=5)
-        
-        # 保存详细结果
-        results.to_csv(Config.MODELS_DIR / 'evaluation_results.csv', index=False)
-        logger.info("\n评估结果已保存至 evaluation_results.csv")
-        
-    except Exception as e:
-        logger.error(f"评估过程出错: {str(e)}", exc_info=True)
-        raise
+        plt.tight_layout()
+        plt.savefig(self.results_dir / 'feature_importance.png')
+        plt.close()
+    
+    def evaluate(self):
+        """执行完整的模型评估"""
+        try:
+            logger.info("开始模型评估...")
+            
+            # 加载数据和模型
+            X_test_scaled, y_test, X_test = self.load_model_and_data()
+            
+            # 进行预测
+            y_pred = self.model.predict(X_test_scaled)
+            
+            # 计算评估指标
+            metrics = self.calculate_metrics(y_test, y_pred)
+            
+            # 记录评估结果
+            logger.info("\n模型评估指标:")
+            for target, target_metrics in metrics.items():
+                logger.info(f"\n{target}:")
+                for metric_name, value in target_metrics.items():
+                    logger.info(f"{metric_name}: {value:.4f}")
+            
+            # 生成可视化
+            logger.info("\n生成评估可视化...")
+            self.plot_prediction_scatter(y_test, y_pred)
+            self.plot_error_distribution(y_test, y_pred)
+            self.analyze_feature_importance(X_test_scaled)
+            
+            # 保存评估结果
+            evaluation_results = {
+                'metrics': metrics,
+                'predictions': y_pred,
+                'true_values': y_test.values,
+                'feature_names': X_test_scaled.columns.tolist()
+            }
+            joblib.dump(evaluation_results, 
+                       self.results_dir / 'evaluation_results.joblib')
+            
+            logger.info(f"\n评估完成！结果已保存至: {self.results_dir}")
+            
+            return evaluation_results
+            
+        except Exception as e:
+            logger.error(f"评估过程中出错: {str(e)}")
+            raise
 
 if __name__ == "__main__":
-    main()
+    evaluator = ModelEvaluator()
+    evaluator.evaluate()

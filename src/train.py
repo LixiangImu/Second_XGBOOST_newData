@@ -26,11 +26,17 @@ def load_data():
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 def preprocess_features(X_train, X_val, X_test):
-    """特征预处理"""
+    """更新特征预处理"""
     scaler = StandardScaler()
     
-    # 获取数值型特征的列名
-    numeric_features = X_train.select_dtypes(include=['float64', 'int64']).columns
+    # 获取实际存在的数值型特征
+    numeric_features = X_train.select_dtypes(include=['float64', 'int64']).columns.tolist()
+    
+    # 排除已经编码的分类特征（如果有的话）
+    numeric_features = [col for col in numeric_features if not col.endswith('_encoded')]
+    
+    logger.info("对以下特征进行标准化处理:")
+    logger.info(f"特征列表: {numeric_features}")
     
     # 对训练集进行拟合和转换
     X_train_scaled = X_train.copy()
