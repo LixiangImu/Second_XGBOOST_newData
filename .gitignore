@@ -1,0 +1,10 @@
+#忽略数据集
+data/raw/*.csv
+data/processed/*.csv
+data/features/*.csv
+
+#忽略模型
+models/*.joblib
+
+#忽略日志
+logs/
