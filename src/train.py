@@ -106,6 +106,12 @@ def train_model():
     test_metrics = model.evaluate(X_test_scaled, y_test)
     model.log_metrics(test_metrics, prefix='Test')
     
+    # 保存评估报告
+    report_dir = Config.MODELS_DIR / 'evaluation_reports'
+    report_dir.mkdir(parents=True, exist_ok=True)
+    with open(report_dir / 'test_evaluation_report.txt', 'w') as f:
+        f.write(f"Test Metrics:\n{test_metrics}\n")
+    
     # 6. 记录特征重要性
     model.log_feature_importance()
     
@@ -121,7 +127,11 @@ def train_model():
     
     # 保存结果和模型
     joblib.dump(results, Config.MODELS_DIR / 'training_results.joblib')
-    joblib.dump(model, Config.MODELS_DIR / 'queue_predictor.joblib')
+    
+    # 保存模型到单独的文件夹
+    model_dir = Config.MODELS_DIR / 'trained_models'
+    model_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, model_dir / 'queue_predictor.joblib')
     
     logger.info("训练完成！模型和结果已保存。")
     
@@ -141,6 +151,17 @@ def train_with_cv(X, y, n_splits=5):
         
         val_metrics = model.evaluate(X_val, y_val)
         cv_scores.append(val_metrics)
+        
+        # 保存每个fold的评估报告
+        report_dir = Config.MODELS_DIR / 'evaluation_reports'
+        report_dir.mkdir(parents=True, exist_ok=True)
+        with open(report_dir / f'fold_{fold}_evaluation_report.txt', 'w') as f:
+            f.write(f"Fold {fold} Validation Metrics:\n{val_metrics}\n")
+        
+        # 保存每个fold的模型
+        model_dir = Config.MODELS_DIR / 'trained_models'
+        model_dir.mkdir(parents=True, exist_ok=True)
+        joblib.dump(model, model_dir / f'fold_{fold}_queue_predictor.joblib')
         
         logger.info(f"\nFold {fold} 验证集评估结果:")
         model.log_metrics(val_metrics, prefix=f'Fold {fold}')
