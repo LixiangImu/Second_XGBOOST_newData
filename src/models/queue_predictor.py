@@ -13,24 +13,18 @@ class XGBoostQueuePredictor(BaseModel):
     
     def __init__(self, params=None):
         super().__init__(name="XGBoostQueuePredictor")
-        # 更新基础参数以适应新特征
+        # 修改基础参数以减少过拟合
         self.base_params = {
             '排队到叫号等待': {
                 'objective': 'reg:squarederror',
-                'max_depth': 8,        # 增加深度
-                'learning_rate': 0.05, # 降低学习率
-                'n_estimators': 200,   # 增加树的数量
-                'subsample': 0.8,
-                'colsample_bytree': 0.7,
-                'random_state': 42
-            },
-            '叫号到入口等待': {
-                'objective': 'reg:squarederror',
-                'max_depth': 10,
-                'learning_rate': 0.03,
-                'n_estimators': 300,
-                'subsample': 0.7,
-                'colsample_bytree': 0.7,
+                'max_depth': 6,             # 降低树的深度
+                'learning_rate': 0.01,      # 降低学习率
+                'n_estimators': 100,        # 减少树的数量
+                'subsample': 0.7,           # 降低样本采样比例
+                'colsample_bytree': 0.6,    # 降低特征采样比例
+                'min_child_weight': 3,      # 增加最小子节点权重
+                'reg_alpha': 0.1,           # 添加L1正则化
+                'reg_lambda': 1.0,          # 添加L2正则化
                 'random_state': 42
             }
         }
@@ -61,7 +55,7 @@ class XGBoostQueuePredictor(BaseModel):
         self.model.fit(X_train, y_train)
         
         # 训练后输出每个目标的特征重要性
-        for i, target in enumerate(['排队到叫号等待', '叫号到入口等待']):
+        for i, target in enumerate(['排队到叫号等待']):
             logger.info(f"\n{target} - 特征重要性:")
             importance = self.model.estimators_[i].feature_importances_
             feat_imp = pd.DataFrame({
@@ -89,7 +83,7 @@ class XGBoostQueuePredictor(BaseModel):
     def fit_with_early_stopping(self, X_train, y_train, X_val, y_val):
         """使用早停的训练方法"""
         self.model = []
-        for i, target in enumerate(['排队到叫号等待', '叫号到入口等待']):
+        for i, target in enumerate(['排队到叫号等待']):
             model = xgb.XGBRegressor(
                 **self.base_params[target],
                 early_stopping_rounds=10,
@@ -124,7 +118,7 @@ class XGBoostQueuePredictor(BaseModel):
             # 如果是使用早停训练的模型列表
             for i, model in enumerate(self.model):
                 importance = model.feature_importances_
-                target = ['排队到叫号等待', '叫号到入口等待'][i]
+                target = ['排队到叫号等待'][i]
                 
                 if feature_names:
                     importance_dict[target] = dict(zip(feature_names, importance))
@@ -134,7 +128,7 @@ class XGBoostQueuePredictor(BaseModel):
             # 如果是MultiOutputRegressor
             for i, estimator in enumerate(self.model.estimators_):
                 importance = estimator.feature_importances_
-                target = ['排队到叫号等待', '叫号到入口等待'][i]
+                target = ['排队到叫号等待'][i]
                 
                 if feature_names:
                     importance_dict[target] = dict(zip(feature_names, importance))

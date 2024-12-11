@@ -67,17 +67,9 @@ class DataPreprocessor:
             raise
 
     def calculate_intervals(self, df):
-        """计算各个环节的时间间隔(分钟)"""
-        # 核心等待时间
+        """计算排队到叫号的等待时间(分钟)"""
+        # 只保留核心等待时间
         df['排队到叫号等待'] = (df['叫号时刻'] - df['排队时刻']).dt.total_seconds() / 60
-        df['叫号到入口等待'] = (df['入口操作时刻'] - df['叫号时刻']).dt.total_seconds() / 60  # 修正列名
-
-        # 其他流程时间
-        df['入口到回皮'] = (df['回皮操作时刻'] - df['入口操作时刻']).dt.total_seconds() / 60  # 修正列名
-        df['回皮到出库'] = (df['出库操作时刻'] - df['回皮操作时刻']).dt.total_seconds() / 60  # 修正列名
-        df['出库到出口'] = (df['出口操作时刻'] - df['出库操作时刻']).dt.total_seconds() / 60  # 修正列名
-        df['总处理时间'] = (df['出口操作时刻'] - df['入口操作时刻']).dt.total_seconds() / 60  # 修正列名
-    
         return df
 
     def add_time_features(self, df):
@@ -101,14 +93,12 @@ class DataPreprocessor:
         """
         数据清洗
         """
-        # 移除明显异常值
+        # 只保留排队到叫号等待时间的清洗
         df = df[df['排队到叫号等待'] >= 0]
         df = df[df['排队到叫号等待'] < 24*60]  # 排除等待超过24小时的记录
-        df = df[df['叫号到入口等待'] >= 0]
-        df = df[df['叫号到入口等待'] < 12*60]  # 排除等待超过12小时的记录
         
         # 处理缺失值
-        df = df.dropna(subset=['排队到叫号等待', '叫号到入口等待'])
+        df = df.dropna(subset=['排队到叫号等待'])
         
         return df
     
@@ -176,7 +166,7 @@ class DataPreprocessor:
                         (coal_df['排队时刻'] <= current_time)
                     ]
                     
-                    # 计算统计量
+                    # 只计算排队到叫号等待相关的统计量
                     df.loc[idx, f'{window_name}平均排队等待'] = window_data['排队到叫号等待'].mean()
                     df.loc[idx, f'{window_name}最大排队等待'] = window_data['排队到叫号等待'].max()
                     df.loc[idx, f'{window_name}标准差'] = window_data['排队到叫号等待'].std()
@@ -203,7 +193,7 @@ class DataPreprocessor:
             ) * df[f'{window_name}平均排队等待']
         
         # 添加时间周期特征
-        df['小时周期性'] = np.sin(2 * np.pi * df['排队小时'] / 24)
+        df['��时周期性'] = np.sin(2 * np.pi * df['排队小时'] / 24)
         df['星期周期性'] = np.sin(2 * np.pi * df['排队星期'] / 7)
         
         # 填充可能的空值

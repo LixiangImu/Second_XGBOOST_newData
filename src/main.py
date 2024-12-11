@@ -47,7 +47,7 @@ def prepare_data():
     features = feature_engineer.process(processed_data)
     
     # 准备目标变量
-    targets = processed_data[['排队到叫号等待', '叫号到入口等待']]
+    targets = processed_data[['排队到叫号等待']]
     
     # 保存特征和标签
     features.to_csv(Config.FEATURES_DATA_PATH, index=False)
@@ -64,7 +64,7 @@ def data_analysis(processed_data):
     
     # 基本统计信息
     logger.info("\n等待时间统计(分钟):")
-    wait_time_stats = processed_data[['排队到叫号等待', '叫号到入口等待']].describe()
+    wait_time_stats = processed_data[['排队到叫号等待']].describe()
     logger.info(f"\n{wait_time_stats}")
     
     # 煤种分布
@@ -78,7 +78,7 @@ def data_analysis(processed_data):
     logger.info(f"\n{time_period_dist}")
     
     # 每小时平均等待时间
-    hourly_wait = processed_data.groupby('排队小时')[['排队到叫号等待', '叫号到入口等待']].mean()
+    hourly_wait = processed_data.groupby('排队小时')[['排队到叫号等待']].mean()
     logger.info("\n每小时平均等待时间:")
     logger.info(f"\n{hourly_wait}")
 

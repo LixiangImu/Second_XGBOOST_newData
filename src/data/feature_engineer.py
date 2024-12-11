@@ -48,12 +48,6 @@ class FeatureEngineer:
                 window=f'{hours}H',
                 on='排队时刻'
             )['排队到叫号等待'].mean()
-            
-            # 叫号到入口
-            df[f'前{hours}小时平均入口等待'] = df.rolling(
-                window=f'{hours}H',
-                on='排队时刻'
-            )['叫号到入口等待'].mean()
         
         # 填充缺失值
         historical_cols = [col for col in df.columns if '前' in col and '小时' in col]
@@ -76,13 +70,54 @@ class FeatureEngineer:
         
         return df
     
+    def create_cyclical_features(self, df):
+        """创建周期性特征"""
+        # 添加小时的周期性特征
+        df['小时周期性'] = np.sin(2 * np.pi * df['排队小时'] / 24)
+        # 添加星期的周期性特征
+        df['星期周期性'] = np.sin(2 * np.pi * df['排队星期'] / 7)
+        return df
+    
+    def process(self, df):
+        """
+        完整的特征工程流程
+        """
+        print("开始特征工程...")
+        
+        # 创建队列特征
+        df = self.create_queue_features(df)
+        print("完成队列特征创建")
+        
+        # 创建历史特征
+        df = self.create_historical_features(df)
+        print("完成历史特征创建")
+        
+        # 创建周期性特征
+        df = self.create_cyclical_features(df)
+        print("完成周期性特征创建")
+        
+        # 编码分类特征
+        df = self.encode_categorical_features(df)
+        print("完成分类特征编码")
+        
+        features = self.select_features(df)
+        print(f"最终特征数量: {len(self.feature_columns)}")
+        
+        return features
+    
     def select_features(self, df):
         """更新特征选择"""
         self.feature_columns = [
             # 基础时间特征
             '排队小时', '排队分钟', '排队星期', '是否周末',
             '小时分钟', '是否高峰期',
-            '小时周期性', '星期周期性',
+            '小时周期性', '星期周期性',  # 确保这些特征已经被创建
+            
+            # 队列特征
+            '当前排队数', '同煤种排队数',
+            
+            # 历史特征
+            '前1小时平均排队等待', '前2小时平均排队等待', '前4小时平均排队等待',
             
             # 30分钟窗口特征
             '30分钟平均排队等待', '30分钟最大排队等待', '30分钟标准差',
@@ -104,27 +139,12 @@ class FeatureEngineer:
             '煤种编号_encoded', '时间段_encoded'
         ]
         
+        # 检查所有特征是否都存在
+        missing_features = [col for col in self.feature_columns if col not in df.columns]
+        if missing_features:
+            raise KeyError(f"以下特征在数据中不存在: {missing_features}")
+        
         return df[self.feature_columns]
-    
-    def process(self, df):
-        """
-        完整的特征工程流程
-        """
-        print("开始特征工程...")
-        
-        df = self.create_queue_features(df)
-        print("完成队列特征创建")
-        
-        df = self.create_historical_features(df)
-        print("完成历史特征创建")
-        
-        df = self.encode_categorical_features(df)
-        print("完成分类特征编码")
-        
-        features = self.select_features(df)
-        print(f"最终特征数量: {len(self.feature_columns)}")
-        
-        return features
     
     def process_single(self, data):
         """修改单条预测处理逻辑"""

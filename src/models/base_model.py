@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 import logging
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +27,42 @@ class BaseModel(ABC):
     def evaluate(self, X, y_true):
         """评估模型性能"""
         y_pred = self.predict(X)
-        metrics = {}
         
-        # 计算每个目标变量的指标
-        for i, col in enumerate(['排队到叫号等待', '叫号到入口等待']):
-            y_true_i = y_true.iloc[:, i]
-            y_pred_i = y_pred[:, i]
+        # 确保y_true是DataFrame
+        if not isinstance(y_true, pd.DataFrame):
+            y_true = pd.DataFrame(y_true, columns=['排队到叫号等待'])
+        
+        # 计算指标
+        metrics = {}
+        target = '排队到叫号等待'
+        
+        # 获取预测值和真实值
+        if isinstance(y_pred, np.ndarray) and len(y_pred.shape) > 1:
+            y_pred_i = y_pred[:, 0]
+        else:
+            y_pred_i = y_pred
             
-            metrics[f'{col}_mse'] = mean_squared_error(y_true_i, y_pred_i)
-            metrics[f'{col}_rmse'] = np.sqrt(metrics[f'{col}_mse'])
-            metrics[f'{col}_mae'] = mean_absolute_error(y_true_i, y_pred_i)
-            metrics[f'{col}_r2'] = r2_score(y_true_i, y_pred_i)
-            
+        y_true_i = y_true[target] if isinstance(y_true, pd.DataFrame) else y_true
+        
+        # 计算各项指标
+        mse = mean_squared_error(y_true_i, y_pred_i)
+        rmse = np.sqrt(mse)
+        mae = mean_absolute_error(y_true_i, y_pred_i)
+        r2 = r2_score(y_true_i, y_pred_i)
+        
+        metrics[target] = {
+            'MSE': mse,
+            'RMSE': rmse,
+            'MAE': mae,
+            'R2': r2
+        }
+        
         return metrics
     
     def log_metrics(self, metrics, prefix=''):
         """记录评估指标"""
-        logger.info(f"\n{prefix} Metrics for {self.name}:")
-        for metric_name, value in metrics.items():
-            logger.info(f"{metric_name}: {value:.4f}")
+        logger.info(f"\n{prefix} 指标:")
+        for target, target_metrics in metrics.items():
+            logger.info(f"\n{target}:")
+            for metric_name, value in target_metrics.items():
+                logger.info(f"{metric_name}: {value:.4f}")

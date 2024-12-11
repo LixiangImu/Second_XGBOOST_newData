@@ -8,7 +8,7 @@ class Config:
     RAW_DATA_PATH = DATA_DIR / 'raw' / 'queue_data_2050.csv'
     PROCESSED_DATA_PATH = DATA_DIR / 'processed' / 'processed_data.csv'
     FEATURES_DATA_PATH = DATA_DIR / 'features' / 'features.csv'
-    MODELS_DIR = ROOT_DIR / 'models'
+    MODELS_DIR = ROOT_DIR / 'models' 
     
     # 数据处理配置
     RANDOM_SEED = 42
